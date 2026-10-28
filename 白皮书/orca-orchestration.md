@@ -223,12 +223,13 @@ gh pr create --base main --head <分支名> --title "..." --body "..."
 ```bash
 orca orchestration reset --all                       # ⚠️ 全局重置: 清本机所有 run 的账(不只本 run) <!-- issue#14/15/18 -->
 orca terminal close --worktree name:<围挡名> --all    # 关围挡下全部终端
-orca worktree rm --worktree name:<围挡名> --force     # 删围挡(注意:不删分支!)
-cd <仓库> && git worktree prune && git branch -D <分支名>   # 删分支要单独做; <分支名>带 <git用户名>/ 前缀, 先 git branch --show-current 查 <!-- issue#14/15/18 -->
+orca worktree rm --worktree name:<围挡名> --force     # 删围挡(注意:不删分支! 返回 ok ≠ 删完, 目录是异步删除) <!-- issue#23/24 -->
+sleep 2                                              # 实测: rm 返回 ok 后目录仍在异步删除中, 立即删分支会报 cannot delete branch used by worktree <!-- issue#23/24 -->
+cd <仓库> && git worktree prune && git branch -D <实际分支名>   # 实测顺序: rm → sleep 2 → prune → 删分支; 立即删会报 cannot delete branch used by worktree; <实际分支名>带 <git用户名>/ 前缀, 先 git branch --show-current 查 <!-- issue#14/15/18 --> <!-- issue#23/24 -->
 git fetch --prune                                    # 清远程引用缓存
 ```
 
-**清理警示(两件事)**:其一,`reset --all` 是**全局重置**,清的是本机**所有** run 的账本——包括其他会话、其他项目留下的(实测曾连带清掉本机另外 5 个 run 的账;git/GitHub 里的成果不受影响,但账本/审计记录没了),只清本 run 用 `--tasks` 或 `--messages` 精确范围,多 run 共存的机器上慎用 `--all`。其二,③里 `repo add` 注册的仓库目前**没有 CLI 注销命令**(实测无 `repo rm`,CLI 只提示 repo add / repo set),注册留在 Orca 里无害,确要移除走 App 界面。<!-- issue#14/15/18 -->
+**清理警示(两件事)**:其一,`reset --all` 是**全局重置**,清的是本机**所有** run 的账本——包括其他会话、其他项目留下的(实测曾连带清掉本机另外 5 个 run 的账;git/GitHub 里的成果不受影响,但账本/审计记录没了),实测 `reset --tasks` 执行成功且不清 run 账本本身(`orca orchestration run-list` 输出不变);`--tasks`/`--messages` 是按数据类型(任务/消息)选择清理范围,并非按 run 选择;其精确作用范围未完全确证,使用前以 `orca orchestration reset --help` 实时输出为准,多 run 共存的机器上慎用 `--all`。其二,③里 `repo add` 注册的仓库目前**没有 CLI 注销命令**(实测无 `repo rm`,CLI 只提示 repo add / repo set),注册留在 Orca 里无害,确要移除走 App 界面。<!-- issue#14/15/18 --> <!-- issue#23/24 -->
 
 **同名避让围挡的清理**:先 `orca worktree list` 拿完整 id,再用 `id:<repoId>::<完整路径>` 选择器清理(实测有效)——避让围挡的 `name:` 选择器有歧义(见第六章坑 8)。<!-- issue#11 -->
 
@@ -357,10 +358,10 @@ orca skills install --skill orchestration --skill orca-cli --skill computer-use
 | 推分支 | `cd <围挡路径>` 后 `git push -u origin <分支名>` | 分支名用实际值(git branch --show-current 查,带 <git用户名>/ 前缀) <!-- issue#14/15/18 --> |
 | 开 PR | `gh pr create --base main --head <分支名> --title "..." --body "..."` | 人审 |
 | 合 PR | `gh pr merge <PR号> --merge --delete-branch` | 人审通过后 |
-| 清编排状态 | `orca orchestration reset --all` | ⚠️ 全局重置:清本机所有 run(不只本 run);只清本 run 用 --tasks 或 --messages <!-- issue#14/15/18 --> |
+| 清编排状态 | `orca orchestration reset --all` | ⚠️ 全局重置:清本机所有 run(不只本 run);--tasks/--messages 按数据类型(任务/消息)选清理范围而非按 run(实测 reset --tasks 不清 run 账本本身, run-list 不变);精确范围未完全确证,用前以 `orca orchestration reset --help` 实时输出为准 <!-- issue#14/15/18 --> <!-- issue#23/24 --> |
 | 关围挡终端 | `orca terminal close --worktree name:<围挡名> --all` | 围挡下全部终端 |
-| 删围挡 | `orca worktree rm --worktree name:<围挡名> --force` | 注意:不删分支! |
-| 删分支 | `cd <仓库> && git worktree prune && git branch -D <分支名>` | 与删围挡分开做;分支名带 <git用户名>/ 前缀,用实际分支名 <!-- issue#14/15/18 --> |
+| 删围挡 | `orca worktree rm --worktree name:<围挡名> --force` | 注意:不删分支! 返回 ok 后目录是异步删除 <!-- issue#23/24 --> |
+| 删分支 | `cd <仓库> && git worktree prune && git branch -D <实际分支名>` | rm 后先 sleep 2 再 prune 再删,立即删报 cannot delete branch used by worktree;分支名带 <git用户名>/ 前缀,用实际分支名 <!-- issue#14/15/18 --> <!-- issue#23/24 --> |
 | 清远程缓存 | `git fetch --prune` | 清远程引用缓存 |
 | 诊断·工单 | `orca orchestration worker-show --dispatch <dispatchId> --json` | result.worker.state / result.projection.liveness.verdict / result.projection.nextAction.argv <!-- issue#14/15/18 --> |
 | 诊断·清单 | `orca orchestration worker-list --run <run_id> --include-remote --json` | 按 nextAction 字面 argv 行动 |
