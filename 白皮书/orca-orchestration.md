@@ -88,7 +88,7 @@ orca orchestration run-create --objective "<目标一句话>" --json
 ```
 
 - **干什么**:开一本账。协调者就是发起这条命令的终端,返回里带 `coordinator_handle`。
-- **怎么确认成功**:输出形如 `{"run":{"id":"run_xxx","objective":"...","coordinator_handle":"term_xxx",...}}`,把 run id 记下来。
+- **怎么确认成功**:输出形如 `{"run":{"id":"run_xxx","objective":"...","coordinator_handle":"term_xxx",...}}`,JSON 点路径取 `result.run.id` 与 `result.run.coordinator_handle`,把 run id 记下来。<!-- issue#13 -->
 
 ### ③ 派工人
 
@@ -97,7 +97,7 @@ orca orchestration worker-start --spec '<五要素任务卡>' --worktree current
 ```
 
 - **干什么**:把任务卡派给一个新终端里的工人。`--worktree current` 解析为**协调者终端在 Orca 里绑定的那个工作区**——与你 shell 当前 `cd` 到的目录无关,cd 不决定工人的落点(需要隔离时走第四章的两步法)。任务卡**五要素**:Target(目标文件,**写绝对路径**,如 `Target: /Users/<你>/myrepo/白皮书/orca-orchestration.md(你的 worktree 副本)`)/ Change(具体产出)/ Constraints(不许碰什么)/ Ownership(归谁改)/ Observable acceptance(什么证据算完成,**同样写绝对路径**,如 `diff 只含 /Users/<你>/myrepo/白皮书/orca-orchestration.md`)——卡片必须自包含,工人只看它干活;正因工人落点不随你的 `cd` 变化,这两项必须用绝对路径,相对路径对工人有歧义。<!-- issue#3 -->
-- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,两个 ID 都记下来。**核对落点**:返回 JSON 里的 `effects[].worktree` 必须与预期的仓库一致;不一致立即停车,改用 `--worktree id:完整id` 显式指定后重派。注意这条重派路径有前提:零上下文的新 clone 里 Orca 还不认识这个仓库,须先 `orca repo add --path <绝对路径>` 在 Orca 注册、拿到 repoId,再走第四章 `worktree create` 建围挡,才有完整 id(`id:<repoId>::<path>`)可写进 selector;未注册前不存在任何可指定的围挡,唯一落点就是注册后的当前工作区(即 `--worktree current` 解析到的那个),先补注册再谈重派。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端。<!-- issue#3 --> <!-- issue#7 -->
+- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,JSON 点路径:`taskId`/`dispatchId` 就在顶层(无嵌套前缀),两个 ID 都记下来。**核对落点**:返回 JSON 里的 `effects[].worktree` 必须与预期的仓库一致;不一致立即停车,改用 `--worktree id:完整id` 显式指定后重派。注意这条重派路径有前提:零上下文的新 clone 里 Orca 还不认识这个仓库,须先 `orca repo add --path <绝对路径>` 在 Orca 注册、拿到 repoId,再走第四章 `worktree create` 建围挡,才有完整 id(`id:<repoId>::<path>`)可写进 selector;未注册前不存在任何可指定的围挡,唯一落点就是注册后的当前工作区(即 `--worktree current` 解析到的那个),先补注册再谈重派。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端。<!-- issue#3 --> <!-- issue#7 --> <!-- issue#13 -->
 
 ### ④ 心跳处理
 
@@ -117,6 +117,7 @@ orca orchestration check --run <run_id> --ack <deliveryId> --wait --types "worke
 ```
 
 - **干什么**:官方等待姿势,一条命令阻塞等待三类消息:完工回执(worker_done)、升级(escalation)、提问(question)。**不要自己写轮询脚本**——历史上自造轮询翻过车(见第六章坑 2)。
+- **信箱无待签收信时**:上一步 `check` 返回 `count=0`、`deliveryId=null`(没有待 ack 的信)时,省略 `--ack`,直接 `orca orchestration check --run <run_id> --wait --types "worker_done,escalation,question" --timeout-ms 540000 --json`。<!-- issue#12 -->
 - **怎么确认成功**:收到 `type=worker_done`,payload 含 `outcome`/`filesModified`/`taskId`/`dispatchId`。
 - **连续三次空等怎么办**:停止盲等,用 `orca orchestration worker-list --run <run_id> --include-remote --json` 枚举工人,按每行 `nextAction` 的字面 argv 行动。**"没有消息"永远不构成停止、重试或释放的依据**。
 
@@ -128,7 +129,7 @@ orca orchestration worker-show --dispatch <dispatchId> --json
 ```
 
 - **干什么**:回执只是工人"自述干完了",验收要看世界里的真凭实据——git 里有新提交、diff 对得上任务卡;系统里工单状态是成功。
-- **怎么确认成功**:`worker-show` 输出 `state:"succeeded"`,`nextAction.kind:"release"`。
+- **怎么确认成功**:`worker-show` 输出 `state:"succeeded"`,`nextAction.kind:"release"`——JSON 点路径取 `result.state` 与 `nextAction.kind`。<!-- issue#13 -->
 - **协议提醒**:有效的 worker_done 会**自动**结算 Task 和 Dispatch,不要再跟一条 `task-update --status completed`。
 
 ### ⑦ 结算:ack 回执 + 释放工人
@@ -225,6 +226,8 @@ cd <仓库> && git worktree prune && git branch -D <分支名>   # 删分支要�
 git fetch --prune                                    # 清远程引用缓存
 ```
 
+**同名避让围挡的清理**:先 `orca worktree list` 拿完整 id,再用 `id:<repoId>::<完整路径>` 选择器清理(实测有效)——避让围挡的 `name:` 选择器有歧义(见第六章坑 8)。<!-- issue#11 -->
+
 **放置纪律**(什么时候该用隔离通道):新工人 = 新终端,默认用 current 或指定已有工作区;**建 worktree 仅当用户要求或真实文件冲突**。不是每次派工都要围挡。
 
 ## 5. 验收纪律
@@ -294,7 +297,7 @@ git fetch --prune                                    # 清远程引用缓存
 ### 坑 8(历史遗留,教学法案例):同名 worktree 自动避让
 
 - **现象**:`worktree create --name isolation-demo` 第二次使用时,Orca 自动起名 isolation-demo-2,不留神会以为建错了。
-- **处理**:知道这是自动避让即可,围挡照常用。
+- **处理**:知道这是自动避让即可,围挡照常用。**副作用**:displayName 不避让,会导致后续 `name:` 选择器歧义——要点名避让围挡时,改用 `id:<repoId>::<完整路径>` 选择器(见第四章清理)。<!-- issue#11 -->
 
 ## 7. 安全带:skill 门禁
 
