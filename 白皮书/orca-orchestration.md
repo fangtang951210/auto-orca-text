@@ -96,8 +96,8 @@ orca orchestration run-create --objective "<目标一句话>" --json
 orca orchestration worker-start --spec '<五要素任务卡>' --worktree current --agent claude --json
 ```
 
-- **干什么**:把任务卡派给一个新终端里的工人。`--worktree current` 表示工人直接在当前工作区干活(需要隔离时走第四章的两步法)。任务卡**五要素**:Target(目标文件)/ Change(具体产出)/ Constraints(不许碰什么)/ Ownership(归谁改)/ Observable acceptance(什么证据算完成)——卡片必须自包含,工人只看它干活。
-- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,两个 ID 都记下来。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端。
+- **干什么**:把任务卡派给一个新终端里的工人。`--worktree current` 解析为**协调者终端在 Orca 里绑定的那个工作区**——与你 shell 当前 `cd` 到的目录无关,cd 不决定工人的落点(需要隔离时走第四章的两步法)。任务卡**五要素**:Target(目标文件,**写绝对路径**,如 `Target: /Users/<你>/myrepo/白皮书/orca-orchestration.md(你的 worktree 副本)`)/ Change(具体产出)/ Constraints(不许碰什么)/ Ownership(归谁改)/ Observable acceptance(什么证据算完成,**同样写绝对路径**,如 `diff 只含 /Users/<你>/myrepo/白皮书/orca-orchestration.md`)——卡片必须自包含,工人只看它干活;正因工人落点不随你的 `cd` 变化,这两项必须用绝对路径,相对路径对工人有歧义。<!-- issue#3 -->
+- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,两个 ID 都记下来。**核对落点**:返回 JSON 里的 `effects[].worktree` 必须与预期的仓库一致;不一致立即停车,改用 `--worktree id:完整id` 显式指定后重派。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端。<!-- issue#3 -->
 
 ### ④ 心跳处理
 
@@ -336,7 +336,7 @@ orca skills install --skill orchestration --skill orca-cli --skill computer-use
 |---|---|---|
 | ① 确认就绪 | `orca status --json` | 看 runtime.state="ready"、runtime.reachable=true |
 | ② 建账 | `cd <你的仓库目录>` 后 `orca orchestration run-create --objective "<目标一句话>" --json` | 返回 run id、coordinator_handle |
-| ③ 派工(快车道) | `orca orchestration worker-start --spec '<五要素任务卡>' --worktree current --agent claude --json` | 返回 taskId、dispatchId;之后 terminal list 验活 |
+| ③ 派工(快车道) | `orca orchestration worker-start --spec '<五要素任务卡>' --worktree current --agent claude --json` | current=协调者终端在 Orca 绑定的工作区,与 shell 的 cd 目录无关;返回 taskId、dispatchId,并核对 effects[].worktree 落点与预期仓库一致;之后 terminal list 验活 <!-- issue#3 --> |
 | ④ 读信 | `orca orchestration check --run <run_id> --json` | 返回 deliveryId + messages |
 | ④ 签收 | `orca orchestration check --run <run_id> --ack <deliveryId> --json` | FIFO 逐条 ack |
 | ⑤ 等回执 | `orca orchestration check --run <run_id> --ack <deliveryId> --wait --types "worker_done,escalation,question" --timeout-ms 540000 --json` | 官方等待姿势,不写轮询 |
