@@ -129,7 +129,7 @@ orca orchestration worker-show --dispatch <dispatchId> --json
 ```
 
 - **干什么**:回执只是工人"自述干完了",验收要看世界里的真凭实据——git 里有新提交、diff 对得上任务卡;系统里工单状态是成功。
-- **怎么确认成功**:`worker-show` 输出 `state:"succeeded"`,`nextAction.kind:"release"`——JSON 点路径取 `result.state` 与 `nextAction.kind`。<!-- issue#13 -->
+- **怎么确认成功**:`worker-show` 输出 `state:"succeeded"`,`nextAction.kind:"release"`——JSON 点路径取 `result.worker.state` 与 `result.projection.nextAction.kind`(注意带 `worker.`/`projection.` 前缀;`result` 顶层没有 `state`,也没有顶层 `nextAction`)。<!-- issue#13 --> <!-- issue#14/15/18 -->
 - **协议提醒**:有效的 worker_done 会**自动**结算 Task 和 Dispatch,不要再跟一条 `task-update --status completed`。
 
 ### ⑦ 结算:ack 回执 + 释放工人
@@ -148,7 +148,7 @@ orca orchestration worker-release --dispatch <dispatchId> --json
 orca orchestration worker-show --dispatch <dispatchId> --json
 ```
 
-看三样:`state`(succeeded/failed)、`liveness.verdict`(live/unverifiable/exited)、`nextAction.kind + nextAction.argv`——官方把下一步该跑的命令都替你算好了,照抄即可。
+看三样:`result.worker.state`(succeeded/failed)、`result.projection.liveness.verdict`(live/unverifiable/exited)、`result.projection.nextAction.kind + result.projection.nextAction.argv`——官方把下一步该跑的命令都替你算好了,照抄即可。<!-- issue#14/15/18 -->
 
 ```bash
 orca orchestration worker-list --run <run_id> --include-remote --json
@@ -199,7 +199,7 @@ cd <仓库目录>
 orca worktree create --repo name:<仓库名> --name <围挡名> --json
 ```
 
-实测输出:`id: <repoId>::<围挡完整路径>`,`branch: refs/heads/<围挡名>`。
+实测输出:`id: <repoId>::<围挡完整路径>`,`branch: refs/heads/<git用户名>/<围挡名>`(JSON 点路径 `result.worktree.branch`)——分支名带 `<git用户名>/` 前缀,**不是裸围挡名**(未关联身份的仓库可能无前缀,总之以实际返回为准);后续 push / 删分支都要用这个实际分支名。<!-- issue#14/15/18 -->
 
 ```bash
 # 第二步:工人派进围挡(注意 selector 必须用完整 id,格式 id:<repoId>::<path>)
@@ -216,15 +216,19 @@ gh pr create --base main --head <分支名> --title "..." --body "..."
 # 人审或 gh pr merge <PR号> --merge --delete-branch
 ```
 
+**分支名用实际值**:`<分支名>` 不是裸围挡名,而是 worktree create 返回的实际分支(带 `<git用户名>/` 前缀,如围挡 `acceptance4` 的分支是 `refs/heads/<git用户名>/acceptance4`)。动手前先在围挡里 `git branch --show-current` 查实际分支名,按围挡名拼会操作到不存在的分支。<!-- issue#14/15/18 -->
+
 用完清理(恢复初始):
 
 ```bash
-orca orchestration reset --all                       # 清编排状态
+orca orchestration reset --all                       # ⚠️ 全局重置: 清本机所有 run 的账(不只本 run) <!-- issue#14/15/18 -->
 orca terminal close --worktree name:<围挡名> --all    # 关围挡下全部终端
 orca worktree rm --worktree name:<围挡名> --force     # 删围挡(注意:不删分支!)
-cd <仓库> && git worktree prune && git branch -D <分支名>   # 删分支要单独做
+cd <仓库> && git worktree prune && git branch -D <分支名>   # 删分支要单独做; <分支名>带 <git用户名>/ 前缀, 先 git branch --show-current 查 <!-- issue#14/15/18 -->
 git fetch --prune                                    # 清远程引用缓存
 ```
+
+**清理警示(两件事)**:其一,`reset --all` 是**全局重置**,清的是本机**所有** run 的账本——包括其他会话、其他项目留下的(实测曾连带清掉本机另外 5 个 run 的账;git/GitHub 里的成果不受影响,但账本/审计记录没了),只清本 run 用 `--tasks` 或 `--messages` 精确范围,多 run 共存的机器上慎用 `--all`。其二,③里 `repo add` 注册的仓库目前**没有 CLI 注销命令**(实测无 `repo rm`,CLI 只提示 repo add / repo set),注册留在 Orca 里无害,确要移除走 App 界面。<!-- issue#14/15/18 -->
 
 **同名避让围挡的清理**:先 `orca worktree list` 拿完整 id,再用 `id:<repoId>::<完整路径>` 选择器清理(实测有效)——避让围挡的 `name:` 选择器有歧义(见第六章坑 8)。<!-- issue#11 -->
 
@@ -298,6 +302,7 @@ git fetch --prune                                    # 清远程引用缓存
 
 - **现象**:`worktree create --name isolation-demo` 第二次使用时,Orca 自动起名 isolation-demo-2,不留神会以为建错了。
 - **处理**:知道这是自动避让即可,围挡照常用。**副作用**:displayName 不避让,会导致后续 `name:` 选择器歧义——要点名避让围挡时,改用 `id:<repoId>::<完整路径>` 选择器(见第四章清理)。<!-- issue#11 -->
+- **连带的分支名坑**:自动建的分支同样带 `<git用户名>/` 前缀(避让后形如 `refs/heads/<git用户名>/<围挡名>-2`),push / 删分支时认 `git branch --show-current` 的实际输出,别按围挡名拼。<!-- issue#14/15/18 -->
 
 ## 7. 安全带:skill 门禁
 
@@ -344,20 +349,20 @@ orca skills install --skill orchestration --skill orca-cli --skill computer-use
 | ④ 签收 | `orca orchestration check --run <run_id> --ack <deliveryId> --json` | FIFO 逐条 ack |
 | ⑤ 等回执 | `orca orchestration check --run <run_id> --ack <deliveryId> --wait --types "worker_done,escalation,question" --timeout-ms 540000 --json` | 官方等待姿势,不写轮询 |
 | ⑥ 验收 | `git -C <工作区> log --oneline -3 && git show --stat <新提交>` | 查 git 世界 |
-| ⑥ 验收 | `orca orchestration worker-show --dispatch <dispatchId> --json` | 期望 state:"succeeded"、nextAction.kind:"release" |
+| ⑥ 验收 | `orca orchestration worker-show --dispatch <dispatchId> --json` | 期望 result.worker.state:"succeeded"、result.projection.nextAction.kind:"release" <!-- issue#14/15/18 --> |
 | ⑦ 签收回执 | `orca orchestration check --run <run_id> --ack <回执的deliveryId> --json` | 有效的 worker_done 自动结算,勿再 task-update |
 | ⑦ 释放工人 | `orca orchestration worker-release --dispatch <dispatchId> --json` | 终端可能以 "user_takeover" retained 留在界面 |
-| 围挡·第一步 | `cd <仓库目录>` 后 `orca worktree create --repo name:<仓库名> --name <围挡名> --json` | 输出 id 与 branch;名字自动避让重名 |
+| 围挡·第一步 | `cd <仓库目录>` 后 `orca worktree create --repo name:<仓库名> --name <围挡名> --json` | 输出 id 与 branch;分支为 refs/heads/<git用户名>/<围挡名>(带前缀,以输出为准);名字自动避让重名 <!-- issue#14/15/18 --> |
 | 围挡·第二步 | `orca orchestration worker-start --spec '<五要素任务卡>' --worktree "id:<repoId>::<围挡完整路径>" --agent claude --json` | selector 必须用完整 id |
-| 推分支 | `cd <围挡路径>` 后 `git push -u origin <分支名>` | 围挡分支的成果 |
+| 推分支 | `cd <围挡路径>` 后 `git push -u origin <分支名>` | 分支名用实际值(git branch --show-current 查,带 <git用户名>/ 前缀) <!-- issue#14/15/18 --> |
 | 开 PR | `gh pr create --base main --head <分支名> --title "..." --body "..."` | 人审 |
 | 合 PR | `gh pr merge <PR号> --merge --delete-branch` | 人审通过后 |
-| 清编排状态 | `orca orchestration reset --all` | 恢复初始 |
+| 清编排状态 | `orca orchestration reset --all` | ⚠️ 全局重置:清本机所有 run(不只本 run);只清本 run 用 --tasks 或 --messages <!-- issue#14/15/18 --> |
 | 关围挡终端 | `orca terminal close --worktree name:<围挡名> --all` | 围挡下全部终端 |
 | 删围挡 | `orca worktree rm --worktree name:<围挡名> --force` | 注意:不删分支! |
-| 删分支 | `cd <仓库> && git worktree prune && git branch -D <分支名>` | 与删围挡分开做 |
+| 删分支 | `cd <仓库> && git worktree prune && git branch -D <分支名>` | 与删围挡分开做;分支名带 <git用户名>/ 前缀,用实际分支名 <!-- issue#14/15/18 --> |
 | 清远程缓存 | `git fetch --prune` | 清远程引用缓存 |
-| 诊断·工单 | `orca orchestration worker-show --dispatch <dispatchId> --json` | state / liveness.verdict / nextAction.argv |
+| 诊断·工单 | `orca orchestration worker-show --dispatch <dispatchId> --json` | result.worker.state / result.projection.liveness.verdict / result.projection.nextAction.argv <!-- issue#14/15/18 --> |
 | 诊断·清单 | `orca orchestration worker-list --run <run_id> --include-remote --json` | 按 nextAction 字面 argv 行动 |
 | 诊断·读屏 | `orca terminal read --terminal <handle> --screen` | 快照,不是实时 |
 
