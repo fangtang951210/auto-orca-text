@@ -97,7 +97,7 @@ orca orchestration worker-start --spec '<五要素任务卡>' --worktree current
 ```
 
 - **干什么**:把任务卡派给一个新终端里的工人。`--worktree current` 解析为**协调者终端在 Orca 里绑定的那个工作区**——与你 shell 当前 `cd` 到的目录无关,cd 不决定工人的落点(需要隔离时走第四章的两步法)。任务卡**五要素**:Target(目标文件,**写绝对路径**,如 `Target: /Users/<你>/myrepo/白皮书/orca-orchestration.md(你的 worktree 副本)`)/ Change(具体产出)/ Constraints(不许碰什么)/ Ownership(归谁改)/ Observable acceptance(什么证据算完成,**同样写绝对路径**,如 `diff 只含 /Users/<你>/myrepo/白皮书/orca-orchestration.md`)——卡片必须自包含,工人只看它干活;正因工人落点不随你的 `cd` 变化,这两项必须用绝对路径,相对路径对工人有歧义。<!-- issue#3 -->
-- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,两个 ID 都记下来。**核对落点**:返回 JSON 里的 `effects[].worktree` 必须与预期的仓库一致;不一致立即停车,改用 `--worktree id:完整id` 显式指定后重派。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端。<!-- issue#3 -->
+- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,两个 ID 都记下来。**核对落点**:返回 JSON 里的 `effects[].worktree` 必须与预期的仓库一致;不一致立即停车,改用 `--worktree id:完整id` 显式指定后重派。注意这条重派路径有前提:零上下文的新 clone 里 Orca 还不认识这个仓库,须先 `orca repo add --path <绝对路径>` 在 Orca 注册、拿到 repoId,再走第四章 `worktree create` 建围挡,才有完整 id(`id:<repoId>::<path>`)可写进 selector;未注册前不存在任何可指定的围挡,唯一落点就是注册后的当前工作区(即 `--worktree current` 解析到的那个),先补注册再谈重派。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端。<!-- issue#3 --> <!-- issue#7 -->
 
 ### ④ 心跳处理
 
@@ -106,7 +106,7 @@ orca orchestration check --run <run_id> --json
 orca orchestration check --run <run_id> --ack <deliveryId> --json
 ```
 
-- **干什么**:工人会发 `type=heartbeat` 的消息报平安。第一条 `check` 取信,返回 `deliveryId` + messages;第二条按 FIFO(先进先出)逐条 `ack`(**ack** = 签收,告诉系统"这封信我读过了")。**没签收的信会重放,还会遮住后续新信**,所以读一条、签一条。
+- **干什么**:心跳是**可选信号**——快任务可能一条心跳都没有,`check` 首次取信直接就是 `worker_done`,这同样正常,不要当成异常。有心跳时,工人发 `type=heartbeat` 的消息报平安,第一条 `check` 取信,返回 `deliveryId` + messages;第二条按 FIFO(先进先出)逐条 `ack`(**ack** = 签收,告诉系统"这封信我读过了")。**没签收的信会重放,还会遮住后续新信**,所以读一条、签一条。<!-- issue#8 -->
 - **怎么确认成功**:ack 之后再次 check,已签收的信不再出现。
 - **纪律**:**心跳 ≠ 完成**。收到心跳只说明工人活着,继续等,不要提前下结论。
 
