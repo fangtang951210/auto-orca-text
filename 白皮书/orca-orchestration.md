@@ -90,6 +90,15 @@ orca orchestration run-create --objective "<目标一句话>" --json
 - **干什么**:开一本账。协调者就是发起这条命令的终端,返回里带 `coordinator_handle`。
 - **怎么确认成功**:输出形如 `{"run":{"id":"run_xxx","objective":"...","coordinator_handle":"term_xxx",...}}`,JSON 点路径取 `result.run.id` 与 `result.run.coordinator_handle`,把 run id 记下来。<!-- issue#13 -->
 
+### ③ 派工前置检查:确认协调者工作区就是目标仓库
+
+```bash
+orca terminal list --json
+```
+
+- **干什么**:派工前先确认**协调者终端绑定的 Orca 工作区就是目标仓库**——下一步的 `--worktree current` 会把工人派到这个绑定工作区。在终端列表里找到自己(条目 handle 与 ② 返回的 `coordinator_handle` 一致),看它的 `cwd` 是否指向目标仓库。<!-- issue#25/26/29/30/31 -->
+- **不是目标仓库怎么办**:二选一——先 `orca repo add --path <目标仓库绝对路径>` 在 Orca 注册仓库,并在正确的工作区重开终端(重走 ②③);或直接走第四章隔离通道(`worktree create` 显式建围挡、以完整 id 派工),落点不经 current 解析。<!-- issue#25/26/29/30/31 -->
+
 ### ③ 派工人
 
 ```bash
@@ -97,7 +106,7 @@ orca orchestration worker-start --spec '<五要素任务卡>' --worktree current
 ```
 
 - **干什么**:把任务卡派给一个新终端里的工人。`--worktree current` 解析为**协调者终端在 Orca 里绑定的那个工作区**——与你 shell 当前 `cd` 到的目录无关,cd 不决定工人的落点(需要隔离时走第四章的两步法)。任务卡**五要素**:Target(目标文件,**写绝对路径**,如 `Target: /Users/<你>/myrepo/白皮书/orca-orchestration.md(你的 worktree 副本)`)/ Change(具体产出)/ Constraints(不许碰什么)/ Ownership(归谁改)/ Observable acceptance(什么证据算完成,**同样写绝对路径**,如 `diff 只含 /Users/<你>/myrepo/白皮书/orca-orchestration.md`)——卡片必须自包含,工人只看它干活;正因工人落点不随你的 `cd` 变化,这两项必须用绝对路径,相对路径对工人有歧义。<!-- issue#3 -->
-- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,JSON 点路径:`taskId`/`dispatchId` 就在顶层(无嵌套前缀),两个 ID 都记下来。**核对落点**:返回 JSON 里的 `effects[].worktree` 必须与预期的仓库一致;不一致立即停车,改用 `--worktree id:完整id` 显式指定后重派。注意这条重派路径有前提:零上下文的新 clone 里 Orca 还不认识这个仓库,须先 `orca repo add --path <绝对路径>` 在 Orca 注册、拿到 repoId,再走第四章 `worktree create` 建围挡,才有完整 id(`id:<repoId>::<path>`)可写进 selector;未注册前不存在任何可指定的围挡,唯一落点就是注册后的当前工作区(即 `--worktree current` 解析到的那个),先补注册再谈重派。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端。<!-- issue#3 --> <!-- issue#7 --> <!-- issue#13 -->
+- **怎么确认成功**:输出 `{"taskId":"task_xxx","dispatchId":"ctx_xxx"}`,JSON 点路径:`taskId`/`dispatchId` 就在顶层(无嵌套前缀),两个 ID 都记下来。**核对落点**:返回 JSON 里的 `effects[].worktree` 必须与预期的仓库一致;不一致立即停车,改用 `--worktree id:完整id` 显式指定后重派。若发现落点错误时工人已开工:任务卡按五要素写的是绝对路径,则落错工作区实际无害——等工人完成后 release,再以正确落点重派即可。注意这条重派路径有前提:零上下文的新 clone 里 Orca 还不认识这个仓库,须先 `orca repo add --path <绝对路径>` 在 Orca 注册、拿到 repoId,再走第四章 `worktree create` 建围挡,才有完整 id(`id:<repoId>::<path>`)可写进 selector;未注册前不存在任何可指定的围挡,唯一落点就是注册后的当前工作区(即 `--worktree current` 解析到的那个),先补注册再谈重派。**启动后必须验证工人真的活了**:`orca terminal list` 里出现新终端(终端多时加过滤:`orca terminal list --worktree <围挡选择器>`,或管道 grep <围挡名>)。<!-- issue#3 --> <!-- issue#7 --> <!-- issue#13 --> <!-- issue#25/26/29/30/31 -->
 
 ### ④ 心跳处理
 
@@ -109,6 +118,7 @@ orca orchestration check --run <run_id> --ack <deliveryId> --json
 - **干什么**:心跳是**可选信号**——快任务可能一条心跳都没有,`check` 首次取信直接就是 `worker_done`,这同样正常,不要当成异常。有心跳时,工人发 `type=heartbeat` 的消息报平安,第一条 `check` 取信,返回 `deliveryId` + messages;第二条按 FIFO(先进先出)逐条 `ack`(**ack** = 签收,告诉系统"这封信我读过了")。**没签收的信会重放,还会遮住后续新信**,所以读一条、签一条。<!-- issue#8 -->
 - **怎么确认成功**:ack 之后再次 check,已签收的信不再出现。
 - **纪律**:**心跳 ≠ 完成**。收到心跳只说明工人活着,继续等,不要提前下结论。
+- **首信已是 worker_done(快任务常见)**:直接跳到⑥验收,**跳过⑤的等待**——⑤的 `--wait` 等的是之后到来的新消息,已经取到的这封回执不会再触发它,照走⑤只会空等满超时;这封回执仍按④的规则先 `ack` 签收,再带着两个 ID 进⑥。<!-- issue#25/26/29/30/31 -->
 
 ### ⑤ 阻塞等待完工回执
 
@@ -117,6 +127,7 @@ orca orchestration check --run <run_id> --ack <deliveryId> --wait --types "worke
 ```
 
 - **干什么**:官方等待姿势,一条命令阻塞等待三类消息:完工回执(worker_done)、升级(escalation)、提问(question)。**不要自己写轮询脚本**——历史上自造轮询翻过车(见第六章坑 2)。
+- **解析注意**:`--wait` 阻塞期间,stdout 可能持续输出 keepalive 心跳流(维持长连接的心跳行)——结束后**不要对整个输出直接 `json.load`**(keepalive 行混在里面,整体已不是合法 JSON),应取输出**末尾最后一个完整 JSON 对象**解析。<!-- issue#25/26/29/30/31 -->
 - **信箱无待签收信时**:上一步 `check` 返回 `count=0`、`deliveryId=null`(没有待 ack 的信)时,省略 `--ack`,直接 `orca orchestration check --run <run_id> --wait --types "worker_done,escalation,question" --timeout-ms 540000 --json`。<!-- issue#12 -->
 - **怎么确认成功**:收到 `type=worker_done`,payload 含 `outcome`/`filesModified`/`taskId`/`dispatchId`。
 - **连续三次空等怎么办**:停止盲等,用 `orca orchestration worker-list --run <run_id> --include-remote --json` 枚举工人,按每行 `nextAction` 的字面 argv 行动。**"没有消息"永远不构成停止、重试或释放的依据**。
@@ -199,7 +210,7 @@ cd <仓库目录>
 orca worktree create --repo name:<仓库名> --name <围挡名> --json
 ```
 
-实测输出:`id: <repoId>::<围挡完整路径>`,`branch: refs/heads/<git用户名>/<围挡名>`(JSON 点路径 `result.worktree.branch`)——分支名带 `<git用户名>/` 前缀,**不是裸围挡名**(未关联身份的仓库可能无前缀,总之以实际返回为准);后续 push / 删分支都要用这个实际分支名。<!-- issue#14/15/18 -->
+实测输出:`id: <repoId>::<围挡完整路径>`,`branch: refs/heads/<git用户名>/<围挡名>`(JSON 点路径 `result.worktree.branch`)——分支名带 `<git用户名>/` 前缀,**不是裸围挡名**(未关联身份的仓库可能无前缀,总之以实际返回为准);后续 push / 删分支都要用这个实际分支名。围挡目录的物理落点在 `~/orca/workspaces/<仓库名>/<围挡名>/`。<!-- issue#14/15/18 --> <!-- issue#25/26/29/30/31 -->
 
 ```bash
 # 第二步:工人派进围挡(注意 selector 必须用完整 id,格式 id:<repoId>::<path>)
